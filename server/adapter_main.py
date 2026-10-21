@@ -350,6 +350,7 @@ async def v3_search(request: Request):
 
     results = data.get("results", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
 
+    # 1. 项目维度严格隔离
     if app_id:
         results = [
             r for r in results
@@ -357,7 +358,23 @@ async def v3_search(request: Request):
                 r.get("metadata", {}).get("appId") == app_id)
         ]
 
-    return JSONResponse({"results": results})
+    # 2. 功能 4：精准上下文召回控制（Top-K & Score 阈值调优 / 精准过滤）
+    # 默认过滤低于 0.35 的弱相关噪音，避免注入无价值上下文污染 Agent
+    min_threshold = body.get("threshold") if ("threshold" in body and body["threshold"] is not None) else 0.35
+    max_top_k = int(body.get("top_k") or body.get("limit") or 8)
+
+    # 按相关度评分倒序排列
+    results.sort(key=lambda x: x.get("score", x.get("similarity", 0)), reverse=True)
+
+    filtered_results = []
+    for r in results:
+        score = r.get("score", r.get("similarity", 1.0))
+        if score >= min_threshold:
+            filtered_results.append(r)
+        if len(filtered_results) >= max_top_k:
+            break
+
+    return JSONResponse({"results": filtered_results, "count": len(filtered_results)})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -430,3 +447,186 @@ async def list_memories(request: Request):
 @app.get("/v3/")
 async def health():
     return {"status": "ok"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. 功能 1：记忆去重与压缩合并 (Memory Deduplication & Cleanup)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/v1/memories/deduplicate")
+@app.post("/v1/memories/deduplicate/")
+@app.post("/v1/memories/consolidate")
+@app.post("/v1/memories/consolidate/")
+async def deduplicate_memories(request: Request):
+    """
+    遍历指定 scope 下的所有记忆条目，识别字面或高语义相似的冗余条目，
+    保留最新一条并清理重复历史，释放数据库并防止上下文污染。
+    """
+    headers = normalize_headers(dict(request.headers))
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    user_id = body.get("user_id") or request.query_params.get("user_id")
+    app_id = body.get("app_id") or request.query_params.get("app_id")
+
+    params = {}
+    if user_id:
+        params["user_id"] = user_id
+    params["top_k"] = 1000
+
+    res = await http_client.get("/memories", params=params, headers=headers)
+    if res.status_code >= 400:
+        return Response(content=res.content, status_code=res.status_code, media_type="application/json")
+
+    try:
+        data = res.json()
+    except Exception:
+        data = []
+
+    memories = data if isinstance(data, list) else (data.get("results") or [])
+    if app_id:
+        memories = [
+            m for m in memories
+            if (m.get("metadata", {}).get("app_id") == app_id or
+                m.get("metadata", {}).get("appId") == app_id)
+        ]
+
+    total_before = len(memories)
+    if total_before <= 1:
+        return JSONResponse({
+            "status": "success",
+            "message": "记忆条目数不足以执行去重",
+            "total_before": total_before,
+            "total_after": total_before,
+            "removed_count": 0,
+            "removed_ids": [],
+        })
+
+    def clean_text(t: str) -> str:
+        return re.sub(r"\s+", " ", (t or "").strip().lower())
+
+    seen_signatures = {}
+    removed_ids = []
+
+    for mem in memories:
+        mem_id = mem.get("id")
+        text = clean_text(mem.get("memory") or mem.get("text") or "")
+        if not text:
+            continue
+
+        is_duplicate = False
+        for sig in seen_signatures:
+            if text == sig:
+                is_duplicate = True
+                break
+            words_a = set(text.split())
+            words_b = set(sig.split())
+            if words_a and words_b:
+                jaccard = len(words_a & words_b) / len(words_a | words_b)
+                if jaccard >= 0.85:
+                    is_duplicate = True
+                    break
+
+        if is_duplicate:
+            removed_ids.append(mem_id)
+        else:
+            seen_signatures[text] = mem_id
+
+    for rid in removed_ids:
+        try:
+            await http_client.delete(f"/memories/{rid}", headers=headers)
+        except Exception as e:
+            logger.warning("Failed to delete duplicate memory %s: %s", rid, e)
+
+    total_after = total_before - len(removed_ids)
+    return JSONResponse({
+        "status": "success",
+        "message": f"去重完成，成功移除 {len(removed_ids)} 条重复记忆",
+        "total_before": total_before,
+        "total_after": total_after,
+        "removed_count": len(removed_ids),
+        "removed_ids": removed_ids,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. 功能 2：一键数据导出与本地备份 (Export & Local Backup)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/v1/memories/export")
+@app.get("/v1/memories/export/")
+@app.get("/v1/exports/get")
+@app.get("/v1/exports/get/")
+async def export_memories(
+    request: Request,
+    format: str = "json",
+    user_id: Optional[str] = None,
+    app_id: Optional[str] = None,
+):
+    """
+    将当前持久化记忆全量导出为 JSON 或 CSV 格式，并附带下载响应头，
+    方便开发者本地备份、迁移与冷存储。
+    """
+    headers = normalize_headers(dict(request.headers))
+    params = {}
+    if user_id:
+        params["user_id"] = user_id
+    params["top_k"] = 1000
+
+    res = await http_client.get("/memories", params=params, headers=headers)
+    if res.status_code >= 400:
+        return Response(content=res.content, status_code=res.status_code, media_type="application/json")
+
+    try:
+        data = res.json()
+    except Exception:
+        data = []
+
+    memories = data if isinstance(data, list) else (data.get("results") or [])
+    if app_id:
+        memories = [
+            m for m in memories
+            if (m.get("metadata", {}).get("app_id") == app_id or
+                m.get("metadata", {}).get("appId") == app_id)
+        ]
+
+    timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+
+    if format.lower() == "csv":
+        import csv
+        import io
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["id", "memory", "user_id", "app_id", "created_at", "updated_at"])
+        for m in memories:
+            meta = m.get("metadata") or {}
+            writer.writerow([
+                m.get("id", ""),
+                m.get("memory") or m.get("text", ""),
+                m.get("user_id", ""),
+                meta.get("app_id") or meta.get("appId", ""),
+                m.get("created_at", ""),
+                m.get("updated_at", ""),
+            ])
+        filename = f"mem0_export_{timestamp_str}.csv"
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+
+    filename = f"mem0_export_{timestamp_str}.json"
+    export_payload = {
+        "export_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "total": len(memories),
+        "user_id": user_id,
+        "app_id": app_id,
+        "memories": memories,
+    }
+    return Response(
+        content=json.dumps(export_payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
