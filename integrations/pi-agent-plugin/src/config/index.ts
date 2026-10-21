@@ -39,6 +39,11 @@ export function loadConfig(): Mem0Config {
   if (process.env.MEM0_USER_ID) {
     config.userId = process.env.MEM0_USER_ID;
   }
+  // 环境变量优先级高于本地配置文件，方便容器化或多环境动态覆盖服务端地址
+  const envBaseUrl = process.env.MEM0_API_URL || process.env.MEM0_BASE_URL || process.env.MEM0_HOST;
+  if (envBaseUrl) {
+    config.baseUrl = envBaseUrl;
+  }
 
   return config;
 }

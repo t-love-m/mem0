@@ -2,6 +2,7 @@ export type Scope = "project" | "session" | "global";
 
 export interface Mem0Config {
   apiKey: string;
+  baseUrl?: string;
   userId: string;
   autoCapture: boolean;
   defaultScope: Scope;

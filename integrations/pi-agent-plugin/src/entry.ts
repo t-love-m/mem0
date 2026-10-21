@@ -29,7 +29,10 @@ export default function mem0Extension(pi: ExtensionAPI): void {
     return;
   }
 
-  const mem0 = new MemoryClient({ apiKey: config.apiKey });
+  const mem0 = new MemoryClient({
+    apiKey: config.apiKey,
+    ...(config.baseUrl ? { host: config.baseUrl } : {}),
+  });
   // Every path below shares this client: automatic recall, capture, the memory
   // tools and deletion as well as the slash commands. Attribution belongs here
   // rather than on individual calls, or everything except the commands reports

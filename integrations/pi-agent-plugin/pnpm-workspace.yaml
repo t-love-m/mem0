@@ -1,6 +1,12 @@
 packages:
   - '.'
 
+allowBuilds:
+  '@google/genai': true
+  better-sqlite3: true
+  esbuild: true
+  protobufjs: true
+
 overrides:
   "form-data@<4.0.6": ">=4.0.6"
   "uuid@<11.1.1": ">=11.1.1"

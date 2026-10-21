@@ -29,3 +29,9 @@ docker-compose up
 - The server imports the Python SDK from the repo, so its conventions apply to any SDK code you touch: see [`../mem0/AGENTS.md`](../mem0/AGENTS.md).
 
 Never commit `.env`. Credentials for the compose services belong in `.env.example` as placeholders only.
+
+## Git & Upstream Sync
+
+- **Remotes**: `origin` -> 个人 Fork (`t-love-m/mem0`)，`upstream` -> 官方仓库 (`mem0ai/mem0`)。
+- **Keep `main` Clean**: `main` 仅镜像官方，不直接提交定制代码。
+- **Feature Branches**: 定制开发切独立分支，同步官方变动使用 `git rebase upstream/main`。

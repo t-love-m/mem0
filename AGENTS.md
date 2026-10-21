@@ -173,3 +173,9 @@ Beyond the CLA and the accepted-issue gate, the [Contribution Conduct](CODE_OF_C
 | Contribution gates | [Two gates decide whether your pull request stays open](#two-gates-decide-whether-your-pull-request-stays-open) |
 | Trust list (vouch) | [`.github/VOUCHED.td`](.github/VOUCHED.td) |
 | CI/CD, gates, rulesets | [`.github/AGENTS.md`](.github/AGENTS.md) |
+
+## Fork & Upstream Sync
+
+- **Remotes**: `origin` -> 个人 Fork (`t-love-m/mem0`)，`upstream` -> 官方仓库 (`mem0ai/mem0`)。
+- **Keep `main` Clean**: `main` 仅用于镜像官方 (`git pull upstream main`)，严禁直接在该分支提交二次开发代码。
+- **Feature Branches**: 所有定制开发切独立分支（如 `feat/*`），同步官方更新使用 `git rebase upstream/main`。
