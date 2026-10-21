@@ -126,6 +126,8 @@ async def ping(request: Request):
 # 2. 记忆写入与大模型限流容灾 (解决 502 provider_rate_limited)
 # ─────────────────────────────────────────────────────────────────────────────
 
+@app.post("/memories")
+@app.post("/memories/")
 @app.post("/v3/memories/add")
 @app.post("/v3/memories/add/")
 async def v3_add(request: Request):
@@ -287,6 +289,8 @@ async def v3_list_memories_post(request: Request):
 # 4. 语义向量检索
 # ─────────────────────────────────────────────────────────────────────────────
 
+@app.post("/search")
+@app.post("/search/")
 @app.post("/v3/memories/search")
 @app.post("/v3/memories/search/")
 async def v3_search(request: Request):
@@ -405,6 +409,8 @@ async def delete_memory(memory_id: str, request: Request):
     return Response(content=res.content, status_code=res.status_code, media_type="application/json")
 
 
+@app.delete("/memories")
+@app.delete("/memories/")
 @app.delete("/v1/memories")
 @app.delete("/v1/memories/")
 async def delete_all_memories(request: Request):
@@ -428,6 +434,8 @@ async def get_event(event_id: str):
     return JSONResponse({"status": "SUCCEEDED", "results": []})
 
 
+@app.get("/memories")
+@app.get("/memories/")
 @app.get("/v2/memories")
 @app.get("/v2/memories/")
 @app.get("/v1/memories")
